@@ -67,29 +67,6 @@ cd task1
 bash scripts/run_benchmark.sh
 ```
 
-离线模拟测试：
-
-```bash
-cd task1
-bash scripts/run_benchmark.sh --mock 60
-```
-
-每个模型会输出：
-
-```text
-model=thread
-total=10 success=10 failed=0
-latency_ms p50=...
-throughput_rps=...
-bytes_saved=...
-memory_kib=...
-success_schools:
-  - 清华大学 latency_ms=... bytes=...
-failed_schools:
-  - 某学校 url=https://... latency_ms=... error=...
-```
-
-`memory_kib` 依赖 Linux `/proc/self/status`，在没有 `/proc` 的系统上不会输出该项。
 
 ## 测试
 
