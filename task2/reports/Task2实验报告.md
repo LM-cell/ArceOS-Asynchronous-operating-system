@@ -191,6 +191,6 @@ Spawned / Ready -> Running -> Pending -> Ready Queue -> Running -> Finished
 
 ## **下周安排**
 
-1.在绿色线程轮询协作式调度基础上，扩展了优先级调度，去验证
+1.在绿色线程轮询协作式调度基础上，去扩展优先级调度，测试验证
 
 2.开始学习任务三
