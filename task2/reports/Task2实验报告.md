@@ -186,9 +186,6 @@ Spawned / Ready -> Running -> Pending -> Ready Queue -> Running -> Finished
 如何恢复；
 调度策略能否扩展。
 ```
-
-绿色线程更适合观察底层执行现场切换；无栈协程更适合理解 Future 状态机；Futures Explained 展示了 executor、reactor 和 waker 的协作关系；Tokio Future 展示了生产级异步运行时的封装能力。优先级扩展进一步说明，用户态运行时也可以实现类似操作系统调度器的策略控制。
-
 ## **下周安排**
 
 1.在绿色线程轮询协作式调度基础上，去扩展优先级调度，测试验证
