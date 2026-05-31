@@ -1,0 +1,7 @@
+[package]
+name = "task2_green_thread_priority"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "time"] }
