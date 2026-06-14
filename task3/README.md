@@ -51,4 +51,4 @@ cargo run --release -- \
   --samples-csv data/samples.csv
 ```
 
-报告模板见 `reports/experiment_report_template.md`，没有实验数据的部分已经预留待填写。
+
