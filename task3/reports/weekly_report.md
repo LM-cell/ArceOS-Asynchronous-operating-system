@@ -1,0 +1,126 @@
+# 有栈执行流与无栈执行流栈资源占用对比
+
+## 工作内容
+
+本周围绕“有栈执行流与无栈执行流的栈资源占用对比”完成了一套 Rust 实验框架，并基于当前采集数据完成初步分析。实验重点比较 OS thread、green thread 和 async/Future 三种执行流模型在高并发任务下的用户栈、内核栈、内核栈数量和整体 RSS 内存变化。
+
+实验中，OS thread 和 green thread 的用户态栈大小统一设置为 64 KiB，内核栈按每个 kernel thread 16 KiB 计算，async Future 的状态机大小测量结果约为 168 bytes。 实际使用量并不等于估算量。
+
+```
+/// 配置 OS thread 的用户态栈大小。
+let stack_size = 64 * 1024;
+
+let spawn_result = thread::Builder::new()
+    .name(format!("os-task-{id}"))
+    .stack_size(stack_size)
+    .spawn(move || {
+        while !task_start_gate.load(Ordering::Acquire) {
+            thread::yield_now();
+        }
+        sample_sync_task(id, sleep, touch_bytes)
+    });
+
+/// 配置 green thread的用户态栈大小。
+let stack_size = 64 * 1024;
+
+let spawn_result = unsafe {
+    may::coroutine::Builder::new()
+        .name(format!("green-task-{id}"))
+        .stack_size(stack_size)
+        .spawn(move || {
+            while !task_start_gate.load(Ordering::Acquire) {
+                may::coroutine::sleep(Duration::from_millis(1));
+            }
+            sample_green_task(id, sleep, touch_bytes)
+        })
+};
+
+/// 测量 async Future 状态机大小。
+let future_state_bytes = mem::size_of_val(&sample_async_task(
+    usize::MAX,
+    config.sleep_duration(),
+    config.touch_stack_bytes,
+));
+```
+
+
+
+## 已完成工作
+
+1. 完成 Rust 实验程序，支持三类模型：
+   - `os_thread`
+   
+   - `green_thread`
+
+   - `async_future`
+   
+     | 模型         | 栈资源特征                                               | 调度方式            |
+     | ------------ | -------------------------------------------------------- | ------------------- |
+     | OS thread    | 每个任务对应独立内核栈 与 kernel stack                   | OS kernel 调度      |
+     | Green thread | 每个任务有独立内核栈，多个任务复用少量 OS worker         | 用户态 runtime 调度 |
+     | Async/Future | 每个任务没有独立用户栈；挂起上下文保存在 Future 状态机中 | 用户态 runtime 调度 |
+   
+2. 完成实验指标采集：
+   - 用户栈预留量
+   - 内核线程数峰值
+   - 内核栈预留量
+   - 单位任务内核线程数
+   - 单位任务内核栈预留量
+   - Future 状态机大小
+   - RSS 峰值
+   
+3. 完成批量运行与数据输出：
+   - 支持输出 CSV/JSON。
+   - 支持对不同模型和任务规模分别运行。
+   - 当前有效任务规模覆盖 `1k / 10k / 50k / 100k` 中的部分组合。
+
+4. 完成图表生成：
+   - 用户栈预留对比
+   - 内核栈预留对比
+   - 单位任务内核栈数
+   - Future 状态机总量
+   - RSS 峰值内存对比
+   - 内核栈状态对比
+   
+   
+
+## 当前实验数据结果
+
+当前有效结果如下：
+
+| 模型 | 任务数 | 用户栈 /MiB | 内核栈/MiB | Future 状态/机 MiB | RSS 峰值内存 MiB | 内核线程数峰值 | 单个任务占内核栈资源 |
+| --- | ---: | :--: | :--: | :--: | :--: | :--: | :--: |
+| `os_thread` | 1K | 62.50 | 15.38 | 0.00 | 19.13 | 984 | 0.984000 |
+| `green_thread` |     1K | 62.50 | 0.11 | 0.00 | 19.08 | 7 | 0.007000 |
+| `green_thread` | 10K | 625.00 | 0.11 | 0.00 | 159.12 | 7 | 0.000700 |
+| `async_future` | 1K | 0.00 | 0.09 | 0.16 | 4.04 | 6 | 0.006000 |
+| `async_future` | 10K | 0.00 | 0.09 | 1.60 | 9.13 | 6 | 0.000600 |
+| `async_future` | 50K | 0.00 | 0.09 | 8.01 | 31.02 | 6 | 0.000120 |
+| `async_future` | 100K | 0.00 | 0.09 | 16.02 | 58.82 | 6 | 0.000060 |
+
+## 主要分析结论
+
+1. OS thread 模型在 1k 任务时峰值内核栈达到 984，说明其基本是一任务一内核线程。该模型的用户栈与内核栈都会随任务数线性增长，扩展到 10k 以上任务时容易失败或超时。
+
+2. Green thread 模型在 1k 和 10k 任务下峰值内核栈都只有 7，说明它有效降低了内核栈压力。但每个任务仍有独立 用户栈，10k 任务时用户栈预留达到 625 MiB。
+
+3. Async/Future 模型在 1k 到 100k 任务下峰值 内核栈始终为 6。100k 任务时 Future 状态机总量约 16.02 MiB，RSS 峰值内存约 58.82 MiB，说明无栈协程在高并发等待型任务下具有明显的栈资源优势。
+
+4. 当前实验更准确地证明了：async task 不会为每个任务创建独立内核栈。大量挂起 Future 共享少量 Tokio worker 的内核栈，因此 内核栈slot 数量不随任务数线性增长。
+
+## 模型优劣总结
+
+| 模型 | 优势 | 不足 |
+| --- | --- | --- |
+| OS thread | 编程简单，OS 原生调度，适合少量并行任务 | 用户栈和内核栈都随任务线性增长，高并发下容易受系统限制 |
+| Green thread | 复用少量 OS worker，内核栈压力低 | 每个任务仍有用户栈，高任务数下用户栈预留较大 |
+| Async/Future | 无独立任务栈，内核栈数基本固定，适合高并发 I/O | 编程模型较复杂，仍有 Future/runtime 堆内存开销 |
+
+## 阶段性结论
+
+有栈执行流和无栈执行流的主要差异在于上下文保存方式。OS thread 和 green thread 都依赖独立栈保存执行上下文，只是 OS thread 同时带来独立内核栈，而 green thread 将 内核栈成本压缩到 worker 级别。Async/Future 则通过状态机保存挂起上下文，避免了每任务用户栈和每任务内核栈，因此在高并发等待场景下具有更好的栈资源扩展性。
+
+实验是模拟了占用了“多少个线程”，但不能证明“每个内核栈里面真实占字节数”。
+
+因为每个人任务占用内核栈的字节不一样，想想能不能实现测量每个内核栈实际用了多少 bytes？
+
